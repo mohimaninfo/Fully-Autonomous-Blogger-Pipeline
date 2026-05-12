@@ -1,0 +1,12 @@
+{
+  "date": "1970-01-01",
+  "primary_used": 0,
+  "fallback_used": 0,
+  "primary_exhausted": false,
+  "fallback_exhausted": false,
+  "last_request_ts": 0.0,
+  "primary_remaining": 1500,
+  "fallback_remaining": 1500,
+  "active_model": "gemini-2.5-flash",
+  "_note": "This file is auto-managed by utils/quota_manager.py. Do not edit manually. It is gitignored — each GitHub Actions runner starts fresh. The date field resets all counters when a new UTC day begins."
+}
