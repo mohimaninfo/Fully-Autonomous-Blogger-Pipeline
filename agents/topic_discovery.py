@@ -28,7 +28,10 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (AutonomousBlogger/1.0)"}
 class TopicDiscoveryAgent:
     def __init__(self, published_posts: list):
         self.published_posts = published_posts
-        self.published_titles = [p.get("title", "").lower() for p in published_posts]
+        self.published_titles = [
+            (p.get("title", "") if isinstance(p, dict) else str(p)).lower()
+            for p in published_posts
+        ]
 
     def _fetch_rss(self, url: str) -> list:
         try:

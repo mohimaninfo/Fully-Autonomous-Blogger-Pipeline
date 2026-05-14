@@ -39,10 +39,27 @@ class OrchestratorAgent:
             return json.load(f)
 
     def _load_published_posts(self) -> list:
-        if PUBLISHED_POSTS_PATH.exists():
+        if not PUBLISHED_POSTS_PATH.exists():
+            return []
+
+        try:
             with open(PUBLISHED_POSTS_PATH, encoding="utf-8") as f:
-                return json.load(f)
-        return []
+                data = json.load(f)
+
+            # Force normalize to list[dict]
+            if isinstance(data, list):
+                cleaned = []
+                for item in data:
+                    if isinstance(item, dict):
+                        cleaned.append(item)
+                    elif isinstance(item, str):
+                        cleaned.append({"title": item})
+                return cleaned
+
+            return []
+
+        except Exception:
+            return []
 
     def build_task_packet(self, genre: str, topic: str, layer: str) -> dict:
         """Minimal task packet (used by integration tests and tooling)."""
@@ -208,9 +225,18 @@ class OrchestratorAgent:
         logger.info("Agent 9: Publisher")
         publisher = PublisherAgent()
         published = publisher.publish(task)
+        
+        # DEBUG LINE (ADD THIS HERE)
+        if isinstance(published, dict):
+            self.published_posts.append(published)
+        else:
+            logger.warning(f"Publisher returned non-dict: {published}")
 
         # Update local published posts log
-        self.published_posts.append(published)
+        if isinstance(published, dict):
+            self.published_posts.append(published)
+        else:
+            self.published_posts.append({"title": str(published)})
 
         return published
 
