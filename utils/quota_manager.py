@@ -387,3 +387,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+def check_daily_quota():
+    """
+    Backward compatibility wrapper for GitHub Actions.
+    """
+    from utils.quota_manager import QuotaManager
+
+    qm = QuotaManager()
+    qm._check_daily_quota()
