@@ -4,7 +4,7 @@
 # ============================================================
 
 # --- Google APIs ---
-google-generativeai>=0.7.0          # Gemini 2.5 / 1.5 Flash
+google-genai                        # Gemini 3 / 2.5 / 1.5 Flash
 google-auth>=2.29.0                 # OAuth2 for Blogger & YouTube
 google-auth-oauthlib>=1.2.0
 google-api-python-client>=2.127.0   # Blogger API v3 + YouTube Data API v3
