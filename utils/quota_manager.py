@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 _lock = Lock()
 
+QUOTA_STATE_FILE = str(LoggingConfig.QUOTA_STATE)
+
+DAILY_LIMITS = {
+    GeminiConfig.PRIMARY_MODEL: GeminiConfig.DAILY_TOKEN_LIMIT,
+    "gemini-2.5-flash": GeminiConfig.DAILY_TOKEN_LIMIT,
+    GeminiConfig.FALLBACK_MODEL: GeminiConfig.DAILY_TOKEN_LIMIT,
+    "gemini-1.5-flash": GeminiConfig.DAILY_TOKEN_LIMIT,
+}
 
 class QuotaExhaustedError(Exception):
     """Raised when all quota — primary and fallback — is exhausted."""
@@ -41,8 +49,58 @@ class QuotaManager:
     """
 
     def __init__(self):
-        self.state_path: Path = LoggingConfig.QUOTA_STATE
+        self.state_path = Path(QUOTA_STATE_FILE)
         self._state = self._load_state()
+        self._legacy_state = {
+            GeminiConfig.PRIMARY_MODEL: {"tokens": int(self._state.get("primary_tokens", 0))},
+            GeminiConfig.FALLBACK_MODEL: {"tokens": int(self._state.get("fallback_tokens", 0))},
+            "_date": self._state.get("date", str(date.today())),
+        }
+
+    @property
+    def state(self) -> dict:
+        """Legacy nested dict used by older tests and scripts."""
+        return self._legacy_state
+
+    def _sync_legacy_to_internal(self) -> None:
+        self._state["primary_tokens"] = int(self._legacy_state[GeminiConfig.PRIMARY_MODEL]["tokens"])
+        self._state["fallback_tokens"] = int(self._legacy_state[GeminiConfig.FALLBACK_MODEL]["tokens"])
+        self._state["date"] = str(self._legacy_state.get("_date", self._state.get("date", str(date.today()))))
+
+    def _sync_internal_to_legacy(self) -> None:
+        self._legacy_state[GeminiConfig.PRIMARY_MODEL]["tokens"] = int(self._state.get("primary_tokens", 0))
+        self._legacy_state[GeminiConfig.FALLBACK_MODEL]["tokens"] = int(self._state.get("fallback_tokens", 0))
+        self._legacy_state["_date"] = self._state.get("date", str(date.today()))
+
+    def get_usage(self, model: str) -> int:
+        if model in (GeminiConfig.PRIMARY_MODEL, "gemini-2.5-flash"):
+            return int(self._legacy_state[GeminiConfig.PRIMARY_MODEL]["tokens"])
+        return int(self._legacy_state[GeminiConfig.FALLBACK_MODEL]["tokens"])
+
+    def increment(self, model: str, tokens: int = 0) -> None:
+        with _lock:
+            if model in (GeminiConfig.PRIMARY_MODEL, "gemini-2.5-flash"):
+                self._state["primary_tokens"] = int(self._state.get("primary_tokens", 0)) + int(tokens)
+                self._state["primary_requests"] = int(self._state.get("primary_requests", 0)) + 1
+            else:
+                self._state["fallback_tokens"] = int(self._state.get("fallback_tokens", 0)) + int(tokens)
+                self._state["fallback_requests"] = int(self._state.get("fallback_requests", 0)) + 1
+            self._sync_internal_to_legacy()
+            self._save_state()
+
+    def is_quota_exceeded(self, model: str) -> bool:
+        limit = DAILY_LIMITS.get(model, GeminiConfig.DAILY_TOKEN_LIMIT)
+        return self.get_usage(model) >= limit
+
+    def get_active_model(self) -> str:
+        if self.get_usage(GeminiConfig.PRIMARY_MODEL) >= GeminiConfig.DAILY_TOKEN_LIMIT:
+            return GeminiConfig.FALLBACK_MODEL
+        return GeminiConfig.PRIMARY_MODEL
+
+    def save(self) -> None:
+        with _lock:
+            self._sync_legacy_to_internal()
+            self._save_state()
 
     # ── State persistence ─────────────────────────────────────────────────────
 
@@ -312,3 +370,20 @@ def with_quota_retry(quota_manager: QuotaManager):
 
         return wrapper
     return decorator
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--status", action="store_true")
+
+    args = parser.parse_args()
+
+    qm = QuotaManager()
+
+    if args.status:
+        print(qm.get_status())
+
+
+if __name__ == "__main__":
+    main()

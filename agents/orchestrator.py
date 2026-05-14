@@ -6,6 +6,7 @@ Agent 1: Orchestrator — Reads taxonomy, schedules tasks, and drives the pipeli
 import json
 import logging
 import random
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from agents.seo import SEOAgent
 from agents.image_agent import ImageAgent
 from agents.video_agent import VideoAgent
 from agents.publisher import PublisherAgent
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -32,23 +35,44 @@ class OrchestratorAgent:
         self.run_log = []
 
     def _load_taxonomy(self) -> dict:
-        with open(TAXONOMY_PATH) as f:
+        with open(TAXONOMY_PATH, encoding="utf-8") as f:
             return json.load(f)
 
     def _load_published_posts(self) -> list:
         if PUBLISHED_POSTS_PATH.exists():
-            with open(PUBLISHED_POSTS_PATH) as f:
+            with open(PUBLISHED_POSTS_PATH, encoding="utf-8") as f:
                 return json.load(f)
         return []
+
+    def build_task_packet(self, genre: str, topic: str, layer: str) -> dict:
+        """Minimal task packet (used by integration tests and tooling)."""
+        return {
+            "genre": genre,
+            "topic": topic,
+            "layer": layer,
+            "task_id": str(uuid.uuid4()),
+        }
+
+    def _pick_genre(self) -> str:
+        genres = self.taxonomy.get("genres") or []
+        if not genres:
+            return "technology"
+        return random.choice([g["id"] for g in genres])
+
+    def generate_daily_tasks(self) -> list:
+        from config.settings import BloggerConfig
+
+        n = BloggerConfig.POSTS_PER_DAY
+        return [self._select_task() for _ in range(n)]
 
     def _save_run_log(self, run_data: dict):
         LOGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         logs = []
         if LOGS_PATH.exists():
-            with open(LOGS_PATH) as f:
+            with open(LOGS_PATH, encoding="utf-8") as f:
                 logs = json.load(f)
         logs.append(run_data)
-        with open(LOGS_PATH, "w") as f:
+        with open(LOGS_PATH, "w", encoding="utf-8") as f:
             json.dump(logs, f, indent=2)
 
     def _select_task(self) -> dict:
@@ -62,7 +86,9 @@ class OrchestratorAgent:
         # Build a frequency map from published posts
         freq = {}
         for post in self.published_posts:
-            key = f"{post.get('genre','')}/{post.get('topic','')}"
+            if not isinstance(post, dict):
+                continue
+            key = f"{post.get('genre', '')}/{post.get('topic', '')}"
             freq[key] = freq.get(key, 0) + 1
 
         # Collect all valid genre/topic/layer combos
@@ -187,3 +213,7 @@ class OrchestratorAgent:
         self.published_posts.append(published)
 
         return published
+
+
+# Backward-compatible alias for tests and older entrypoints
+Orchestrator = OrchestratorAgent

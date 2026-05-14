@@ -13,7 +13,7 @@ Strategy:
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 from urllib.parse import urlparse
@@ -21,6 +21,70 @@ from urllib.parse import urlparse
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+def _validated_link_to_legacy_dict(link: "ValidatedLink") -> dict:
+    """Shape expected by older tests: valid flag, url, optional archive_url."""
+    return {
+        "valid": link.status == LinkStatus.LIVE,
+        "url": link.original_url,
+        "archive_url": link.final_url if link.status == LinkStatus.ARCHIVED else None,
+    }
+
+
+class LinkValidator:
+    def __init__(self):
+        pass
+
+    def validate(self, url: str) -> dict:
+        return _validated_link_to_legacy_dict(validate_url(url))
+
+    def validate_batch(self, urls: list) -> list[dict]:
+        return [_validated_link_to_legacy_dict(validate_url(u)) for u in urls]
+
+
+def validate_url_with_fallback(url: str) -> str:
+    """
+    Validate URL accessibility.
+    Returns original URL if valid, otherwise '#'.
+    """
+
+    if not url:
+        return "#"
+
+    try:
+        response = requests.head(
+            url,
+            allow_redirects=True,
+            timeout=5
+        )
+
+        if response.status_code < 400:
+            return url
+
+        logger.warning(f"Invalid URL: {url} ({response.status_code})")
+
+    except Exception as e:
+        logger.warning(f"URL validation failed: {url} — {e}")
+
+    return "#"
+
+
+def validate_urls(urls: list) -> list:
+    """
+    Validate multiple URLs.
+    Returns only valid URLs.
+    """
+
+    valid = []
+
+    for url in urls:
+        checked = validate_url_with_fallback(url)
+
+        if checked != "#":
+            valid.append(checked)
+
+    return valid
 
 
 class LinkStatus(str, Enum):

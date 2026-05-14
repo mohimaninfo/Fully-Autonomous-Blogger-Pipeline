@@ -336,3 +336,20 @@ class BloggerClient:
                 labels.append(kw_clean)
 
         return labels
+
+    def publish_post(
+        self,
+        title: str,
+        content: str,
+        labels: list[str] | None = None,
+        publish: bool = True,
+        custom_meta_tags: str = "",
+    ) -> dict:
+        """Publish a post (alias for create_post using HTML `content`)."""
+        return self.create_post(
+            title=title,
+            content_html=content,
+            labels=labels,
+            publish=publish,
+            custom_meta_tags=custom_meta_tags,
+        )

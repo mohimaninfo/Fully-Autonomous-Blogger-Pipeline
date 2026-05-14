@@ -6,7 +6,7 @@ Run with:  python -m pytest tests/test_utils.py -v
 
 Tests use mocking to avoid hitting live APIs.
 """
-
+import tempfile
 import json
 import os
 import time
@@ -101,7 +101,10 @@ class TestQuotaManager(unittest.TestCase):
 class TestDedupChecker(unittest.TestCase):
 
     def setUp(self):
-        self.log_path = "/tmp/test_published_posts.json"
+        self.log_path = os.path.join(
+    tempfile.gettempdir(),
+    "test_published_posts.json"
+)
         # Write a small fake post log
         posts = [
             {"title": "How Transformers Work: A Complete Guide", "url": "https://example.blogspot.com/p1"},
@@ -160,7 +163,10 @@ class TestLinkValidator(unittest.TestCase):
     @patch("utils.link_validator.requests.head")
     def test_404_url_triggers_archive_lookup(self, mock_head):
         mock_head.return_value = MagicMock(status_code=404)
-        with patch.object(self.lv, "_get_archive_url", return_value="https://web.archive.org/web/20240101/https://dead-url.com") as mock_arch:
+        with patch(
+            "utils.link_validator._get_archive_url",
+            return_value="https://web.archive.org/web/20240101/https://dead-url.com",
+        ) as mock_arch:
             result = self.lv.validate("https://dead-url.com/article")
             self.assertFalse(result["valid"])
             self.assertIsNotNone(result["archive_url"])
@@ -245,61 +251,67 @@ class TestRSSFetcher(unittest.TestCase):
 class TestGeminiClient(unittest.TestCase):
 
     def setUp(self):
-        # Patch environment API key
         self.env_patcher = patch.dict(os.environ, {"GEMINI_API_KEY": "fake_test_key"})
         self.env_patcher.start()
-        from utils.gemini_client import GeminiClient
-        self.gc = GeminiClient()
 
     def tearDown(self):
         self.env_patcher.stop()
 
-    @patch("utils.gemini_client.requests.post")
-    def test_generate_returns_text(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {
-                "candidates": [{
-                    "content": {
-                        "parts": [{"text": "This is a generated response."}]
-                    }
-                }]
-            }
-        )
-        result = self.gc.generate("Write a test sentence.")
+    def _mock_genai_client(self, side_effect=None, text="This is a generated response."):
+        mi = MagicMock()
+        if side_effect is not None:
+            mi.models.generate_content.side_effect = side_effect
+        else:
+            mi.models.generate_content.return_value = MagicMock(text=text)
+        return mi
+
+    @patch("utils.gemini_client.genai.Client")
+    def test_generate_returns_text(self, mock_client_cls):
+        mock_client_cls.return_value = self._mock_genai_client()
+        from utils.gemini_client import GeminiClient
+
+        gc = GeminiClient()
+        result = gc.generate("Write a test sentence.")
         self.assertIsInstance(result, str)
         self.assertIn("generated", result.lower())
 
-    @patch("utils.gemini_client.requests.post")
-    def test_quota_exceeded_triggers_fallback(self, mock_post):
-        """429 on primary model → retry with fallback model."""
-        responses = [
-            MagicMock(status_code=429, json=lambda: {"error": {"code": 429, "message": "Quota exceeded"}}),
-            MagicMock(status_code=200, json=lambda: {
-                "candidates": [{"content": {"parts": [{"text": "Fallback response."}]}}]
-            }),
-        ]
-        mock_post.side_effect = responses
-        result = self.gc.generate("Test prompt")
-        self.assertEqual(mock_post.call_count, 2)
+    @patch("utils.gemini_client.genai.Client")
+    def test_quota_exceeded_triggers_fallback(self, mock_client_cls):
+        """First call fails, second succeeds (retry path)."""
+        mock_client_cls.return_value = self._mock_genai_client(
+            side_effect=[
+                RuntimeError("rate limited"),
+                MagicMock(text="Fallback response."),
+            ]
+        )
+        from utils.gemini_client import GeminiClient
+
+        gc = GeminiClient()
+        result = gc.generate("Test prompt")
+        self.assertEqual(mock_client_cls.return_value.models.generate_content.call_count, 2)
         self.assertIn("Fallback", result)
 
-    @patch("utils.gemini_client.requests.post")
-    def test_network_error_raises_after_retries(self, mock_post):
-        import requests as req
-        mock_post.side_effect = req.exceptions.ConnectionError("Network down")
-        with self.assertRaises(Exception):
-            # Should retry then raise
-            self.gc.generate("Test prompt", max_retries=2)
-
-    @patch("utils.gemini_client.requests.post")
-    def test_malformed_response_raises_value_error(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"unexpected_key": "no candidates"}
+    @patch("utils.gemini_client.genai.Client")
+    def test_network_error_raises_after_retries(self, mock_client_cls):
+        mock_client_cls.return_value = self._mock_genai_client(
+            side_effect=RuntimeError("Network down"),
         )
-        with self.assertRaises((ValueError, KeyError)):
-            self.gc.generate("Test prompt")
+        from utils.gemini_client import GeminiClient
+
+        gc = GeminiClient(max_retries=2)
+        with self.assertRaises(RuntimeError):
+            gc.generate("Test prompt")
+
+    @patch("utils.gemini_client.genai.Client")
+    def test_malformed_response_raises_value_error(self, mock_client_cls):
+        mi = MagicMock()
+        mi.models.generate_content.return_value = MagicMock(text=None)
+        mock_client_cls.return_value = mi
+        from utils.gemini_client import GeminiClient
+
+        gc = GeminiClient()
+        with self.assertRaises(RuntimeError):
+            gc.generate("Test prompt")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,36 +326,35 @@ class TestBloggerClient(unittest.TestCase):
         })
         self.env_patcher.start()
         from utils.blogger_client import BloggerClient
+
         self.bc = BloggerClient()
 
     def tearDown(self):
         self.env_patcher.stop()
 
-    @patch("utils.blogger_client.requests.post")
-    def test_publish_post_returns_url(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {
-                "id": "987654321",
-                "url": "https://example.blogspot.com/2025/01/test-post.html",
-                "published": "2025-01-15T10:00:00Z"
-            }
-        )
+    @patch("utils.blogger_client.BloggerClient._get_token", return_value="test-access-token")
+    @patch("utils.blogger_client.BloggerClient._post")
+    def test_publish_post_returns_url(self, mock_post, _mock_token):
+        mock_post.return_value = {
+            "id": "987654321",
+            "url": "https://example.blogspot.com/2025/01/test-post.html",
+            "published": "2025-01-15T10:00:00Z",
+        }
         result = self.bc.publish_post(
             title="Test Post Title",
             content="<p>Test content.</p>",
-            labels=["Technology", "AI"]
+            labels=["Technology", "AI"],
         )
         self.assertIn("url", result)
         self.assertIn("blogspot.com", result["url"])
 
-    @patch("utils.blogger_client.requests.post")
-    def test_publish_post_handles_401(self, mock_post):
-        mock_post.return_value = MagicMock(
-            status_code=401,
-            json=lambda: {"error": {"code": 401, "message": "Unauthorized"}}
-        )
-        with self.assertRaises(Exception) as ctx:
+    @patch("utils.blogger_client.BloggerClient._get_token", return_value="test-access-token")
+    @patch("utils.blogger_client.BloggerClient._post")
+    def test_publish_post_handles_401(self, mock_post, _mock_token):
+        from utils.blogger_client import BloggerAPIError
+
+        mock_post.side_effect = BloggerAPIError(401, "Unauthorized")
+        with self.assertRaises(BloggerAPIError) as ctx:
             self.bc.publish_post("Title", "<p>Body</p>", [])
         self.assertIn("401", str(ctx.exception))
 
@@ -382,7 +393,7 @@ class TestFirebaseClient(unittest.TestCase):
 
     @patch("utils.firebase_client.db.reference")
     def test_increment_reaction(self, mock_ref):
-        mock_ref.return_value.get.return_value = {"like": 5}
+        mock_ref.return_value.get.return_value = {"total": 5, "reactions": {"like": 5}}
         mock_ref.return_value.set.return_value = None
         self.fc.increment_reaction("post_123", "like")
         mock_ref.return_value.set.assert_called_once()

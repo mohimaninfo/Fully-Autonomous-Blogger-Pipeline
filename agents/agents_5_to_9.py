@@ -578,7 +578,7 @@ from googleapiclient.discovery import build
 logger = logging.getLogger(__name__)
 
 PUBLISHED_POSTS_PATH = Path("logs/published_posts.json")
-BLOG_ID = os.environ["BLOGGER_BLOG_ID"]
+BLOG_ID = os.environ.get("BLOGGER_BLOG_ID", "")
 
 
 class PublisherAgent:
