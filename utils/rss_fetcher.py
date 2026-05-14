@@ -287,7 +287,10 @@ class RSSFetcher:
         out = [{"title": t.title, "summary": t.raw_snippet or ""} for t in items]
         if out:
             return out
-        feed = feedparser.parse("")
+        # Empty RSS document — avoids ambiguous behavior from feedparser.parse("")
+        feed = feedparser.parse(
+            "<?xml version='1.0'?><rss version='2.0'><channel></channel></rss>"
+        )
         return [
             {"title": getattr(e, "title", ""), "summary": getattr(e, "summary", "")}
             for e in getattr(feed, "entries", []) or []

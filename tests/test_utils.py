@@ -226,14 +226,16 @@ class TestRSSFetcher(unittest.TestCase):
         results = self.rf.fetch_reddit("technology")
         self.assertIsInstance(results, list)
 
+    @patch("utils.rss_fetcher._fetch_google_trends_serpapi", return_value=[])
     @patch("utils.rss_fetcher.feedparser.parse")
-    def test_empty_feed_returns_empty_list(self, mock_parse):
+    def test_empty_feed_returns_empty_list(self, mock_parse, _mock_serp):
         mock_parse.return_value = MagicMock(entries=[])
         results = self.rf.fetch_google_trends()
         self.assertEqual(results, [])
 
+    @patch("utils.rss_fetcher._fetch_google_trends_serpapi", return_value=[])
     @patch("utils.rss_fetcher.feedparser.parse")
-    def test_malformed_entry_skipped_gracefully(self, mock_parse):
+    def test_malformed_entry_skipped_gracefully(self, mock_parse, _mock_serp):
         # Entry with no 'title' attribute simulates malformed feed item
         bad_entry = MagicMock(spec=[])  # no attributes
         mock_parse.return_value = MagicMock(entries=[bad_entry])

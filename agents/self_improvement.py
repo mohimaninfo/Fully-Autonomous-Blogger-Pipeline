@@ -24,13 +24,13 @@ HEADERS = {"User-Agent": "AutonomousBlogger/1.0"}
 
 class SelfImprovementAgent:
     def __init__(self):
-        with open(TAXONOMY_PATH) as f:
+        with open(TAXONOMY_PATH, encoding="utf-8") as f:
             self.taxonomy = json.load(f)
         self.published_posts = self._load_published_posts()
 
     def _load_published_posts(self) -> list:
         if PUBLISHED_POSTS_PATH.exists():
-            with open(PUBLISHED_POSTS_PATH) as f:
+            with open(PUBLISHED_POSTS_PATH, encoding="utf-8") as f:
                 return json.load(f)
         return []
 
