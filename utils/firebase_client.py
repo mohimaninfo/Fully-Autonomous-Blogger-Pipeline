@@ -22,58 +22,57 @@ Data structure in Firebase:
 
 import json
 import logging
+import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Firebase Admin SDK — imported lazily to allow graceful degradation
+try:
+    import firebase_admin
+    from firebase_admin import credentials
+    from firebase_admin import db
+except ImportError:  # pragma: no cover - optional dependency
+    firebase_admin = None  # type: ignore[assignment]
+    credentials = None  # type: ignore[assignment]
+    db = None  # type: ignore[assignment]
+
 _firebase_initialized = False
 _db = None
 
 
 def _init_firebase():
     """
-    Initialize Firebase Admin SDK using the service account JSON stored
-    in the FIREBASE_SERVICE_ACCOUNT_JSON GitHub secret.
-    Safe to call multiple times — initializes only once.
+    Initialize Firebase Admin SDK using FIREBASE_SERVICE_ACCOUNT_JSON (or
+    FIREBASE_CREDENTIALS_JSON) plus FIREBASE_DATABASE_URL from the environment.
+    Returns the firebase_admin.db module, or None if unavailable / misconfigured.
     """
     global _firebase_initialized, _db
 
     if _firebase_initialized:
         return _db
 
+    if firebase_admin is None or credentials is None or db is None:
+        logger.warning("firebase-admin not installed; Firebase disabled.")
+        return None
+
+    sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "") or os.environ.get(
+        "FIREBASE_CREDENTIALS_JSON", ""
+    )
+    db_url = os.environ.get("FIREBASE_DATABASE_URL", "")
+
+    if not sa_json or not db_url:
+        logger.warning("Firebase credentials not set; Firebase disabled.")
+        return None
+
     try:
-        import firebase_admin
-        from firebase_admin import credentials, db
-
-        from config.settings import Secrets
-
-        if not Secrets.FIREBASE_SERVICE_ACCOUNT_JSON:
-            logger.warning("FIREBASE_SERVICE_ACCOUNT_JSON secret not set. Firebase disabled.")
-            return None
-
-        if not Secrets.FIREBASE_DATABASE_URL:
-            logger.warning("FIREBASE_DATABASE_URL secret not set. Firebase disabled.")
-            return None
-
-        # Parse the service account JSON from the secret
-        service_account_info = json.loads(Secrets.FIREBASE_SERVICE_ACCOUNT_JSON)
-        cred = credentials.Certificate(service_account_info)
-
-        # Only initialize if not already done (handles re-imports)
+        info = json.loads(sa_json)
+        cred = credentials.Certificate(info)
         if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred, {
-                "databaseURL": Secrets.FIREBASE_DATABASE_URL
-            })
-
+            firebase_admin.initialize_app(cred, {"databaseURL": db_url})
         _db = db
         _firebase_initialized = True
         logger.info("Firebase Admin SDK initialized successfully.")
         return _db
-
-    except ImportError:
-        logger.error("firebase-admin package not installed. Run: pip install firebase-admin")
-        return None
     except Exception as e:
         logger.error(f"Firebase initialization failed: {e}")
         return None
@@ -155,6 +154,40 @@ class FirebaseClient:
         except Exception as e:
             logger.error(f"Failed to get likes for post {post_id}: {e}")
             return {}
+
+    def get_reactions(self, post_id: str) -> dict:
+        """Return per-button reaction counts for a post (like / insightful / helpful)."""
+        data = self.get_post_likes(post_id)
+        nested = data.get("reactions") if isinstance(data.get("reactions"), dict) else {}
+
+        def _count(key: str) -> int:
+            if key in nested:
+                return int(nested.get(key) or 0)
+            v = data.get(key)
+            if isinstance(v, (int, float)):
+                return int(v)
+            return 0
+
+        return {
+            "like": _count("like"),
+            "insightful": _count("insightful"),
+            "helpful": _count("helpful"),
+        }
+
+    def increment_reaction(self, post_id: str, reaction: str) -> None:
+        """Increment one reaction counter (server-side)."""
+        if not self.available:
+            return
+        try:
+            ref = self.db.reference(f"/likes/{post_id}")
+            data = ref.get() or {}
+            reactions = dict(data.get("reactions") or {})
+            reactions[reaction] = int(reactions.get(reaction, 0)) + 1
+            payload = {**data, "reactions": reactions}
+            payload["total"] = int(data.get("total", 0)) + 1
+            ref.set(payload)
+        except Exception as e:
+            logger.error(f"Failed to increment reaction {reaction} for {post_id}: {e}")
 
     def get_all_post_likes(self) -> dict:
         """

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(DRY_RUN=true python3 *)",
+      "Bash(DRY_RUN=true python *)"
+    ]
+  }
+}

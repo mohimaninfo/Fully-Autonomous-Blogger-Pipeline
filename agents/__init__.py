@@ -1,17 +1,5 @@
-# agents/__init__.py
-# Marks the agents directory as a Python package.
-# Import all agent classes for convenient access.
-
-from agents.orchestrator import OrchestratorAgent
-from agents.topic_discovery import TopicDiscoveryAgent
-from agents.research import ResearchAgent
-from agents.content_generation import ContentGenerationAgent
-from agents.self_improvement import SelfImprovementAgent
-
-__all__ = [
-    "OrchestratorAgent",
-    "TopicDiscoveryAgent",
-    "ResearchAgent",
-    "ContentGenerationAgent",
-    "SelfImprovementAgent",
-]
+# agents/__init__.py — lightweight exports (avoid importing legacy bundles at import time).
+from . import topic_discovery
+from . import research
+from . import content_generation
+from . import self_improvement

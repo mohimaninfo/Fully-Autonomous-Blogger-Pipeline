@@ -37,7 +37,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Check quota state
-        run: python -c "from utils.quota_manager import check_daily_quota; check_daily_quota()"
+        run: python -c "from utils.quota_manager import QuotaManager; print(QuotaManager().get_status())"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
@@ -76,16 +76,22 @@ jobs:
       - name: Post pipeline summary
         if: always()
         run: |
-          echo "## Pipeline Run Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Date:** $(date -u)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          if [ -f logs/pipeline_runs.json ]; then
-            LATEST=$(python -c "
+          python -c "
           import json
-          with open('logs/pipeline_runs.json') as f: runs = json.load(f)
-          if runs:
-            r = runs[-1]
-            print(f'Posts succeeded: {r.get(\"posts_succeeded\", 0)}/{r.get(\"posts_attempted\", 0)}')
-          ")
-            echo "- **Result:** $LATEST" >> $GITHUB_STEP_SUMMARY
-          fi
+          from datetime import datetime
+
+          try:
+              with open('logs/pipeline_runs.json') as f:
+                  runs = json.load(f)
+
+              if isinstance(runs, list) and runs:
+                  r = runs[-1]
+                  print('## Pipeline Run Summary')
+                  print(f'- Date: {datetime.utcnow().isoformat()}')
+                  print(f'- Posts: {r.get(\"posts_succeeded\",0)}/{r.get(\"posts_attempted\",0)}')
+              else:
+                  print('## Pipeline Run Summary\nNo valid runs found')
+          except Exception as e:
+              print(f'## Pipeline Run Summary\nError: {e}')
+              "
+            >> $GITHUB_STEP_SUMMARY

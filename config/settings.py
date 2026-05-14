@@ -27,7 +27,10 @@ class Secrets:
     BLOGGER_CLIENT_SECRET: str = os.environ.get("BLOGGER_CLIENT_SECRET", "")
     BLOGGER_REFRESH_TOKEN: str = os.environ.get("BLOGGER_REFRESH_TOKEN", "")
     BLOGGER_BLOG_ID: str = os.environ.get("BLOGGER_BLOG_ID", "")
-    FIREBASE_SERVICE_ACCOUNT_JSON: str = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+    FIREBASE_SERVICE_ACCOUNT_JSON: str = (
+        os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+        or os.environ.get("FIREBASE_CREDENTIALS_JSON", "")
+    )
     FIREBASE_DATABASE_URL: str = os.environ.get("FIREBASE_DATABASE_URL", "")
     YOUTUBE_API_KEY: str = os.environ.get("YOUTUBE_API_KEY", "")
     DISQUS_SHORTNAME: str = os.environ.get("DISQUS_SHORTNAME", "")
@@ -79,7 +82,13 @@ class BloggerConfig:
     POST_LABEL_LIMIT: int = 20             # Blogger max labels per post
 
 
-# ─── Pipeline Behavior ─────────────────────────────────────────────────────────
+class Settings:
+    """Backward-compatible settings object (tests / older scripts)."""
+
+    def __init__(self):
+        self.POSTS_PER_DAY = BloggerConfig.POSTS_PER_DAY
+
+
 class PipelineConfig:
     # How many topics to discover before picking one
     TOPIC_CANDIDATES: int = 10

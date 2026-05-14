@@ -16,10 +16,11 @@ import re
 import unicodedata
 from pathlib import Path
 
-from config.settings import LOGS_DIR, PipelineConfig
+from config.settings import PipelineConfig
 
 logger = logging.getLogger(__name__)
 
+PUBLISHED_POSTS_LOG = "logs/published_posts.json"
 
 def normalize_text(text: str) -> str:
     """
@@ -90,128 +91,76 @@ def title_to_slug(title: str) -> str:
     slug = re.sub(r"-+", "-", slug)
     return slug
 
+def is_duplicate(topic: str, existing_topics=None) -> bool:
+    """
+    Return True if `topic` matches or closely resembles any string in existing_topics.
+    Used by topic discovery against recent published titles.
+    """
+    if not topic or not topic.strip() or not existing_topics:
+        return False
+
+    t_clean = topic.strip().lower()
+    n1 = normalize_text(topic)
+    threshold = PipelineConfig.DEDUP_SIMILARITY_THRESHOLD
+
+    for raw in existing_topics:
+        if raw is None:
+            continue
+        s = str(raw).strip()
+        if not s:
+            continue
+        if s.lower() == t_clean:
+            return True
+        if ngram_similarity(n1, normalize_text(s)) >= threshold:
+            return True
+    return False
+
 
 class DedupChecker:
-    """
-    Checks candidate post titles against the existing post log.
+    """Loads published titles/URLs from disk and checks for duplicates (exact + fuzzy)."""
 
-    Usage:
-        checker = DedupChecker()
-        result = checker.is_duplicate("How AI Models Learn From Human Feedback")
-        if result.is_duplicate:
-            print(f"Too similar to: {result.matched_title}")
-    """
+    def __init__(self):
+        self._path = Path(PUBLISHED_POSTS_LOG)
+        self._posts: list[dict] = []
+        self._load()
 
-    def __init__(self, published_posts: list[dict] = None):
-        """
-        Args:
-            published_posts: Pre-loaded list of post dicts. If None, loads
-                             from the published_posts.json log file.
-        """
-        if published_posts is not None:
-            self._posts = published_posts
-        else:
-            self._posts = self._load_published_posts()
-
-        # Pre-compute normalized titles for efficiency
-        self._normalized_titles = [
-            (post, normalize_text(post.get("title", "")))
-            for post in self._posts
-        ]
-        logger.debug(f"DedupChecker loaded {len(self._posts)} existing posts.")
-
-    def _load_published_posts(self) -> list[dict]:
-        """Load the published posts log from disk."""
-        log_path = LOGS_DIR / "published_posts.json"
-        if not log_path.exists():
-            logger.debug("No published_posts.json found — starting fresh.")
-            return []
+    def _load(self) -> None:
+        self._posts = []
+        if not self._path.exists():
+            return
         try:
-            with open(log_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"Failed to load published posts log: {e}")
-            return []
+            with open(self._path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                self._posts = data
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Could not load published posts log %s: %s", self._path, e)
 
-    def check(self, candidate_title: str) -> "DedupResult":
-        """
-        Check if a candidate title is a duplicate of any existing post.
-
-        Returns a DedupResult with:
-        - is_duplicate: bool
-        - similarity_score: float (0.0–1.0)
-        - matched_title: str (the matching existing title, if any)
-        - matched_url: str
-        """
-        if not candidate_title:
-            return DedupResult(
-                candidate=candidate_title,
-                is_duplicate=False,
-                similarity_score=0.0
-            )
-
-        norm_candidate = normalize_text(candidate_title)
+    def is_duplicate(self, title: str) -> bool:
+        if not title or not title.strip():
+            return False
+        t_clean = title.strip().lower()
+        n1 = normalize_text(title)
         threshold = PipelineConfig.DEDUP_SIMILARITY_THRESHOLD
+        for post in self._posts:
+            prev = (post.get("title") or "").strip()
+            if not prev:
+                continue
+            if prev.lower() == t_clean:
+                return True
+            if ngram_similarity(n1, normalize_text(prev)) >= threshold:
+                return True
+        return False
 
-        best_score = 0.0
-        best_match = None
-
-        for post, norm_existing in self._normalized_titles:
-            score = ngram_similarity(norm_candidate, norm_existing)
-            if score > best_score:
-                best_score = score
-                best_match = post
-
-        is_dup = best_score >= threshold
-
-        if is_dup:
-            logger.warning(
-                f"Duplicate detected: '{candidate_title[:60]}' "
-                f"(score={best_score:.3f}) matches "
-                f"'{best_match.get('title', '')[:60]}'"
-            )
-        else:
-            logger.debug(
-                f"No duplicate: '{candidate_title[:60]}' "
-                f"(best_score={best_score:.3f})"
-            )
-
-        return DedupResult(
-            candidate=candidate_title,
-            is_duplicate=is_dup,
-            similarity_score=best_score,
-            matched_title=best_match.get("title") if best_match else None,
-            matched_url=best_match.get("url") if best_match else None,
-        )
-
-    def filter_candidates(self, candidates: list[str]) -> list[str]:
-        """
-        Filter a list of candidate titles, returning only non-duplicate ones.
-        Logs how many were filtered.
-        """
-        unique = []
-        for title in candidates:
-            result = self.check(title)
-            if not result.is_duplicate:
-                unique.append(title)
-
-        removed = len(candidates) - len(unique)
-        if removed > 0:
-            logger.info(f"Dedup filter removed {removed}/{len(candidates)} duplicate candidates.")
-
-        return unique
-
-    def add_post(self, title: str, url: str, metadata: dict = None) -> None:
-        """
-        Add a newly published post to the in-memory index.
-        Call this after publishing to keep the checker current within a run.
-        """
-        new_post = {"title": title, "url": url, **(metadata or {})}
-        self._posts.append(new_post)
-        self._normalized_titles.append((new_post, normalize_text(title)))
-        logger.debug(f"DedupChecker: added post '{title[:60]}' to index.")
-
-
+    def add_entry(self, title: str, url: str | None = None) -> None:
+        self._posts.append({"title": title, "url": url or ""})
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._path, "w", encoding="utf-8") as f:
+                json.dump(self._posts, f, indent=2)
+        except OSError as e:
+            logger.warning("Could not persist published posts log: %s", e)
+        
 class DedupResult:
     """Result object returned by DedupChecker.check()."""
 
