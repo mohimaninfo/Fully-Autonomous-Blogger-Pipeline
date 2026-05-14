@@ -75,26 +75,4 @@ jobs:
 
       - name: Post pipeline summary
         if: always()
-        run: |
-          echo "## Pipeline Run Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Date:** $(date -u)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-
-          if [ -f logs/pipeline_runs.json ]; then
-            LATEST=$(python -c "
-          import json
-          try:
-          with open('logs/pipeline_runs.json') as f:
-            runs = json.load(f)
-          if isinstance(runs, list) and len(runs) > 0:
-            r = runs[-1]
-            print(f'Posts succeeded: {r.get(\"posts_succeeded\", 0)}/{r.get(\"posts_attempted\", 0)}')
-          else:
-            print('No run data')
-          except Exception as e:
-            print(f'Error reading summary: {str(e)}')
-          ")
-            echo "- **Result:** $LATEST" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- **Result:** No pipeline log found" >> $GITHUB_STEP_SUMMARY
-          fi
+        run: python scripts/pipeline_summary.py >> $GITHUB_STEP_SUMMARY
